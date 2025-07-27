@@ -11,7 +11,7 @@ func (app *application) routes() http.Handler {
 
 	r.Get("/v1/healthcheck", app.healthcheckHandler)
 	r.Get("/v1/movies", app.createMovieHandler)
-	r.Get("/v1/movies{id}", app.showMovieHandler)
+	r.Get("/v1/movies/{id}", app.showMovieHandler)
 	
 	return r
 }

@@ -12,7 +12,7 @@ func (app *application) healthcheckHandler(w http.ResponseWriter, r *http.Reques
 		"available": app.config.env,
 		"version":   version,
 	}
-
+	
 	// parse and check error
 	jsonData, err := json.Marshal(data)
 	if err != nil {
