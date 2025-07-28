@@ -12,10 +12,12 @@ import (
 type envelope map[string]interface{}
 
 func (app *application) writeJSON(w http.ResponseWriter, status int, data envelope, headers http.Header) error {
-	jsonData, err := json.Marshal(data)
+	jsonData, err := json.MarshalIndent(data, "", "\t")
 	if err != nil {
 		return err
 	}
+	jsonData = append(jsonData, '\n')
+
 	for key, value := range headers {
 		w.Header()[key] = value
 	}
