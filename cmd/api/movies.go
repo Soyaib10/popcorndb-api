@@ -1,11 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
-	data "github.com/Soyaib10/popcorndb-api/internal"
+	"github.com/Soyaib10/popcorndb-api/internal/data"
 )
 
 func (app *application) createMovieHandler(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +30,8 @@ func (app *application) showMovieHandler(w http.ResponseWriter, r *http.Request)
 		Version:   1,
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelope{"movie": movie}, nil)
+	// err = app.writeJSON(w, http.StatusOK, envelope{"movie": movie}, nil)
+	err = json.NewEncoder(w).Encode(movie)
 	if err != nil {
 		app.logger.Println(err)
 		http.Error(w, "The server encountered a problem and could not process your reques", http.StatusInternalServerError)
