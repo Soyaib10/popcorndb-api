@@ -157,3 +157,113 @@ Now the flags actually control the pool limits.
 
 ---
 
+নিশ্চয়ই! আমি তোমার দেওয়া কনটেন্টকে **README.md ফরম্যাট**-এ সুন্দরভাবে সাজিয়ে দিচ্ছি, যাতে তুমি সরাসরি copy-paste করতে পারো।
+
+````markdown
+# Migration Error and Solution
+
+## Dirty Database Recovery Workflow (golang-migrate)
+
+### ১. Dirty DB State উদাহরণ
+
+```sql
+SELECT * FROM schema_migrations;
+
+ version | dirty
+---------+------
+       3 | t
+````
+
+* `version = 3` → শেষ migration partially applied
+* `dirty = true` → DB inconsistent
+
+---
+
+### ২. ধাপে ধাপে Recovery
+
+#### Step 1: Identify failed migration
+
+কোন migration fail হয়েছে এবং কোন statements apply হয়েছে তা দেখো।
+
+```bash
+cat ./migrations/000003_failed_migration.up.sql
+```
+
+#### Step 2: Manually revert partially applied changes
+
+যা DB-এ create হয়েছে বা modify হয়েছে, সেগুলো undo করো।
+
+```sql
+DROP TABLE directors;           -- যদি table তৈরি হয়ে থাকে
+ALTER TABLE movies DROP COLUMN age; -- যদি column add হয়ে থাকে
+```
+
+#### Step 3: Force version in schema\_migrations
+
+DB clean state signal করতে:
+
+```bash
+migrate -path=./migrations -database="$POPCORN_DB_DSN" force 2
+```
+
+* এখানে `2` → last successfully applied migration
+
+#### Step 4: Re-run migration
+
+```bash
+migrate -path=./migrations -database="$POPCORN_DB_DSN" up
+```
+
+* এখন migration apply হবে
+
+```sql
+SELECT * FROM schema_migrations;
+
+ version | dirty
+---------+------
+       3 | f
+```
+
+✅ Dirty state gone, migration successful
+
+---
+
+### ৩. Summary Diagram
+
+```
+DB dirty (dirty=true, version=X)
+        |
+        v
+Investigate failed migration (check SQL)
+        |
+        v
+Manually revert partial changes
+        |
+        v
+Force version to last good migration
+        |
+        v
+Re-run migration (migrate up)
+        |
+        v
+DB clean (dirty=false, version updated)
+```
+
+---
+
+### 💡 Notes
+
+* প্রতিটি migration সবসময় `.up.sql` ও `.down.sql` রাখো
+* Dirty state এ পরের migration চালানোর আগে **cleanup + force** করা বাধ্যতামূলক
+* Production DB-তে migration চালানোর সময় proper privileges নিশ্চিত করো
+
+---
+
+### সারসংক্ষেপ
+
+1. Migration এ syntax error হলে partially applied হতে পারে → DB dirty।
+2. `schema_migrations` টেবিলে version + dirty=true দেখাবে।
+3. Error ঠিক করে → DB rollback করো → force দিয়ে version clean করো।
+4. তারপর আবার migration চালাতে পারো।
+5. Remote migration support আছে (S3, GitHub)।
+
