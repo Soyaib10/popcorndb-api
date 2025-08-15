@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Soyaib10/popcorndb-api/internal/data"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
@@ -29,6 +30,7 @@ type config struct {
 type application struct {
 	config config
 	logger *log.Logger
+	models data.Models
 }
 
 func main() {
@@ -61,6 +63,7 @@ func main() {
 	app := &application{
 		config: cfg,
 		logger: logger,
+		models: data.NewModels(db),
 	}
 
 	srv := &http.Server{
@@ -92,14 +95,6 @@ func openDB(cfg config) (*pgxpool.Pool, error) {
 		return nil, err
 	}
 	poolConfig.MaxConnIdleTime = duration
-
-	fmt.Println("User:", poolConfig.ConnConfig.User)
-	fmt.Println("Password:", poolConfig.ConnConfig.Password)
-	fmt.Println("Host:", poolConfig.ConnConfig.Host)
-	fmt.Println("Port:", poolConfig.ConnConfig.Port)
-	fmt.Println("Database:", poolConfig.ConnConfig.Database)
-	fmt.Println("SSL Mode:", poolConfig.ConnConfig.TLSConfig != nil)
-	fmt.Println("MaxConns before:", poolConfig.MaxConns)
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {

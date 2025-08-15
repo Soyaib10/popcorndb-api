@@ -1,4 +1,6 @@
-1. panic vs return- when to do what? page 87
+
+
+# 1. Panic vs Return - When to do what? page 87
 
 # 4.3- Restricting inputs
 - add error handling for checking unknown fileds, multiple json and large files more than one mb
@@ -9,7 +11,7 @@
 
 # go mod and go sum
 
-# database connection setup- key things to remember and why 
+# database connection setup- key things to remember and why
 
 ---
 
@@ -157,14 +159,11 @@ Now the flags actually control the pool limits.
 
 ---
 
-নিশ্চয়ই! আমি তোমার দেওয়া কনটেন্টকে **README.md ফরম্যাট**-এ সুন্দরভাবে সাজিয়ে দিচ্ছি, যাতে তুমি সরাসরি copy-paste করতে পারো।
-
-````markdown
 # Migration Error and Solution
 
 ## Dirty Database Recovery Workflow (golang-migrate)
 
-### ১. Dirty DB State উদাহরণ
+### 1. Dirty DB State Example
 
 ```sql
 SELECT * FROM schema_migrations;
@@ -172,18 +171,18 @@ SELECT * FROM schema_migrations;
  version | dirty
 ---------+------
        3 | t
-````
+```
 
-* `version = 3` → শেষ migration partially applied
+* `version = 3` → Last migration partially applied
 * `dirty = true` → DB inconsistent
 
 ---
 
-### ২. ধাপে ধাপে Recovery
+### 2. Step-by-Step Recovery
 
 #### Step 1: Identify failed migration
 
-কোন migration fail হয়েছে এবং কোন statements apply হয়েছে তা দেখো।
+Check which migration failed and which statements were applied.
 
 ```bash
 cat ./migrations/000003_failed_migration.up.sql
@@ -191,22 +190,22 @@ cat ./migrations/000003_failed_migration.up.sql
 
 #### Step 2: Manually revert partially applied changes
 
-যা DB-এ create হয়েছে বা modify হয়েছে, সেগুলো undo করো।
+Undo changes that were created or modified in the DB.
 
 ```sql
-DROP TABLE directors;           -- যদি table তৈরি হয়ে থাকে
-ALTER TABLE movies DROP COLUMN age; -- যদি column add হয়ে থাকে
+DROP TABLE directors;           -- If table was created
+ALTER TABLE movies DROP COLUMN age; -- If column was added
 ```
 
-#### Step 3: Force version in schema\_migrations
+#### Step 3: Force version in schema_migrations
 
-DB clean state signal করতে:
+To signal a clean state in the database:
 
 ```bash
 migrate -path=./migrations -database="$POPCORN_DB_DSN" force 2
 ```
 
-* এখানে `2` → last successfully applied migration
+* Here, `2` → last successfully applied migration
 
 #### Step 4: Re-run migration
 
@@ -214,7 +213,7 @@ migrate -path=./migrations -database="$POPCORN_DB_DSN" force 2
 migrate -path=./migrations -database="$POPCORN_DB_DSN" up
 ```
 
-* এখন migration apply হবে
+* Migration will now apply
 
 ```sql
 SELECT * FROM schema_migrations;
@@ -228,7 +227,7 @@ SELECT * FROM schema_migrations;
 
 ---
 
-### ৩. Summary Diagram
+### 3. Summary Diagram
 
 ```
 DB dirty (dirty=true, version=X)
@@ -251,19 +250,126 @@ DB clean (dirty=false, version updated)
 
 ---
 
-### 💡 Notes
+### Notes
 
-* প্রতিটি migration সবসময় `.up.sql` ও `.down.sql` রাখো
-* Dirty state এ পরের migration চালানোর আগে **cleanup + force** করা বাধ্যতামূলক
-* Production DB-তে migration চালানোর সময় proper privileges নিশ্চিত করো
+* Always keep `.up.sql` and `.down.sql` for every migration
+* Cleanup and force are mandatory before running migrations in a dirty state
+* Ensure proper privileges when running migrations in production
 
 ---
 
-### সারসংক্ষেপ
+### Summary
 
-1. Migration এ syntax error হলে partially applied হতে পারে → DB dirty।
-2. `schema_migrations` টেবিলে version + dirty=true দেখাবে।
-3. Error ঠিক করে → DB rollback করো → force দিয়ে version clean করো।
-4. তারপর আবার migration চালাতে পারো।
-5. Remote migration support আছে (S3, GitHub)।
+1. If a migration has a syntax error, it may be partially applied → DB dirty.
+2. `schema_migrations` table shows version + dirty=true.
+3. Fix the error → rollback DB → force clean version.
+4. Then you can re-run the migration.
+5. Remote migration support is available (S3, GitHub).
 
+---
+
+# Go Struct Embedding / Nesting
+
+* Struct nesting allows embedding one struct inside another.
+* Makes “has-a” relationships explicit.
+* Improves readability, maintainability, and reusability of code.
+* Useful in real-world models: Users, Orders, Cars, Products, etc.
+
+```go
+package main
+
+import "fmt"
+
+type Address struct {
+    Thana string
+    Jila string
+}
+
+type Person struct {
+    Name string
+    Age int
+    Address Address
+}
+
+func NewPerson(name string, age int, thana string, jila string) Person {
+    return Person {
+        Name: name,
+        Age: age,
+        Address: Address{
+            Thana: thana,
+            Jila: jila,
+        },
+    }
+}
+
+func main() {
+	person := NewPerson("abul", 23, "nilfamari", "kanchonongha")
+	fmt.Print(person.Name)
+	fmt.Print(person.Address.Thana)
+}
+```
+
+---
+
+# Connection Pooling: Explicit vs Implicit
+
+```
+┌─────────────────────┐
+│   Application Code  │
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  Connection Pool    │
+│                     │
+│ Explicit (pgxpool)  │
+│ ────────────────── │
+│ - MaxConns = 25     │
+│ - MinConns = 5      │
+│ - IdleTimeout = 15m │
+│ - Fully controlled  │
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  PostgreSQL Server  │
+└─────────────────────┘
+
+
+┌─────────────────────┐
+│   Application Code  │
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  Connection Pool    │
+│                     │
+│ Implicit (sql.DB)   │
+│ ─────────────────  │
+│ - MaxOpenConns = 25 │ │
+│ - MaxIdleConns = 25 │
+│ - Defaults handled  │
+│   automatically     │
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  PostgreSQL Server  │
+└─────────────────────┘
+```
+
+### Key Points:
+
+* **Explicit (pgxpool)**:
+
+  * You configure the pool yourself.
+  * Max/Min connections, idle timeout controllable.
+  * Full Postgres features supported.
+
+* **Implicit (sql.DB)**:
+
+  * Mostly automatic pooling.
+  * You can optionally set limits.
+  * Generic SQL, slow Postgres-specific features.
+
+---
