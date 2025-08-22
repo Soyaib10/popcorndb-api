@@ -72,7 +72,7 @@ func (app *application) writeJSON(w http.ResponseWriter, status int, data envelo
 	return nil
 }
 
-func (app *application) readIdParams(r *http.Request) (int64, error) {
+func (app *application) readIdParam(r *http.Request) (int64, error) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.Atoi(idStr)
 
