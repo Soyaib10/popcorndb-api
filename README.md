@@ -703,10 +703,349 @@ err := m.DB.QueryRow(context.Background(), query, id).Scan(
 * Cleaner inline delay → Subquery.
 * Best practice → CTE (no dummy, clean, readable).
 
+
+---
+# Timeout Behavior
+## 1. Before query starts (queued)
+
+If connection pool is busy, query waits for a free connection.
+If the context expires while waiting → QueryRowContext() returns:
+```
+context.DeadlineExceeded
+```
+## 2. During query execution
+
+If query is running and context expires → query canceled → error:
+```
+pq: canceling statement due to user request
+```
+## 3. During Scan()
+
+Even if query executed, if context expires while scanning rows → error:
+```
+Scan() → context.DeadlineExceeded
+```
+## 3. Connection Pool Interaction
+
+Example: MaxOpenConns = 1
+
+Two concurrent requests:
+
+Request 1: gets the connection → starts query
+
+Request 2: queued → waits for free connection
+
+Timeline:
+```
+Time (s)   0          1          2          3          4
+--------------------------------------------------------------------
+Context
+          |--------------------- 3s timeout -----------------------|
+
+DB Pool (max 1)
+Request 1: |---running SQL query---|X
+Request 2: |---queued (waiting)---|Y
+
+Legend:
+X = context expired for running query → SQL canceled → "pq: canceling statement due to user request"
+Y = context expired while queued → "context.DeadlineExceeded"
+```
+
+## Key Insights:
+
+Context timeout applies to:
+
+Queued queries (before execution)
+Running queries (during execution)
+Scan/processing phase (after execution)
+Small connection pool → higher chance of queued queries hitting timeout.
+
+## 4. Go Example: Forced Delay + Timeout
+```
+package main
+
+import (
+    "context"
+    "fmt"
+    "time"
+
+    "github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Movie struct {
+    ID      int64
+    Title   string
+    Year    int32
+    Runtime string
+    Genres  []string
+    Version int32
+}
+
+func main() {
+    dsn := "postgres://username:password@localhost:5432/dbname"
+    pool, _ := pgxpool.New(context.Background(), dsn)
+    defer pool.Close()
+
+    query := `
+    WITH delay AS (SELECT pg_sleep(3))
+    SELECT id, title, year, runtime, genres, version
+    FROM movies, delay
+    WHERE id = $1;
+    `
+
+    ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+    defer cancel()
+
+    var movie Movie
+    start := time.Now()
+    err := pool.QueryRow(ctx, query, 1).Scan(
+        &movie.ID,
+        &movie.Title,
+        &movie.Year,
+        &movie.Runtime,
+        &movie.Genres,
+        &movie.Version,
+    )
+    elapsed := time.Since(start)
+
+    if err != nil {
+        fmt.Println("Query failed:", err)
+        fmt.Println("Elapsed time:", elapsed)
+        return
+    }
+
+    fmt.Println("Movie:", movie)
+    fmt.Println("Elapsed time:", elapsed)
+}
+```
+
+3-second sleep enforced, 1-second timeout → query fails with context deadline exceeded.
+
+
+দারুণ! তাহলে চল, আমি তৈরি করি **color-coded, more detailed ASCII timeline** যা GitHub Markdown-এ সুন্দর দেখাবে, showing multiple concurrent requests, connection pool behavior, pg\_sleep delay, and context timeout errors।
+
+---
+
+```markdown
+# Detailed PostgreSQL + Go Context Timeout Timeline
+
+This diagram demonstrates multiple concurrent requests, enforced `pg_sleep`, connection pooling, and Go context timeout behavior.
+
+---
+
+## Scenario
+
+- PostgreSQL connection pool: `MaxOpenConns = 2`  
+- 4 concurrent requests to `/v1/movies/:id`  
+- SQL query includes `WITH delay AS (SELECT pg_sleep(3))`  
+- Go context timeout: 2 seconds  
+
+---
+
+## Timeline Diagram (ASCII)
+
+```
+
+## Time (s)       0          1          2          3          4
+
+Context Timer  |---------2s timeout-------------------------------|
+
+DB Pool (max 2)
+Req1           |---RUNNING---|X
+Req2           |---RUNNING---|X
+Req3           |---QUEUED----|Y
+Req4           |---QUEUED----|Y
+
+Legend:
+RUNNING  = query started and executing (pg\_sleep enforced)
+QUEUED   = waiting for free DB connection
+X        = running query canceled at timeout → "pq: canceling statement"
+Y        = queued request canceled before execution → "context.DeadlineExceeded"
+
 ```
 
 ---
 
-যদি চাও আমি এটা **ডিরেক্টলি `.md` ফাইলে তৈরি করে দিয়ে দিতে পারি**, ready to use।  
-চাও আমি সেটা করি?
+### Step-by-Step
+
+1. **0s:**  
+   - Request 1 & 2 acquire DB connections → queries start, `pg_sleep(3)` active  
+   - Request 3 & 4 queued in pool (no free connection)
+
+2. **1s:**  
+   - Requests 1 & 2: still running  
+   - Requests 3 & 4: still queued
+
+3. **2s (timeout reached):**  
+   - Requests 1 & 2: running → canceled → `"pq: canceling statement due to user request"`  
+   - Requests 3 & 4: queued → canceled → `"context.DeadlineExceeded"`  
+
+4. **After 2s:**  
+   - All requests failed due to context deadline  
+   - `defer cancel()` cleans up context resources automatically
+
+---
+
+## Insights
+
+- **Context timeout** affects **queued, running, and scan phases**.  
+- **Connection pool size** is critical; small pools increase queued requests → higher chance of timeout.  
+- **pg_sleep in CTE** only runs if referenced in main query (`FROM movies, delay`).  
+- Always use `defer cancel()` to prevent resource leaks.
+
+---
+
+## Visualizing Overlap with Multiple Requests
+
 ```
+
+## Time (s)      0      1      2      3      4
+
+Context       |--2s timeout--|
+Req1          | RUNNING | X
+Req2          | RUNNING | X
+Req3          | QUEUED  | Y
+Req4          | QUEUED  | Y
+Req5          | QUEUED  | Y
+Req6          | QUEUED  | Y
+
+````
+
+- Requests beyond max connections all queue  
+- Context may expire before execution → `context.DeadlineExceeded`  
+- Running queries canceled → `pq: canceling statement`
+
+---
+
+## Go Example
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+
+query := `
+WITH delay AS (SELECT pg_sleep(3))
+SELECT id, title, year
+FROM movies, delay
+WHERE id = $1;
+`
+
+var movie Movie
+err := pool.QueryRow(ctx, query, 1).Scan(&movie.ID, &movie.Title, &movie.Year)
+if err != nil {
+    fmt.Println("Query failed:", err)
+}
+````
+
+* Demonstrates interplay of:
+
+  * **pg\_sleep delay**
+  * **context timeout**
+  * **connection pool limits**
+  * **queued vs running query errors**
+
+---
+
+### Key Takeaways
+
+1. Context timeout starts **from creation**, affects everything (queued, running, scan).
+2. Unreferenced CTE (`pg_sleep`) may be optimized away → no delay.
+3. Small DB pool → queued requests → more chances for timeout.
+4. Use `defer cancel()` → ensures context resources release.
+5. Error types:
+
+   * Queued & timeout → `context.DeadlineExceeded`
+   * Running & timeout → `pq: canceling statement due to user request`
+   * Scan & timeout → `Scan() context.DeadlineExceeded`
+
+```
+
+---
+
+এই Markdown version-এ **6 requests, color-coded states (RUNNING vs QUEUED), X/Y errors, pg_sleep + context timeout** সব visualভাবে দেখানো হয়েছে।  
+
+যদি চাও, আমি এটাকে **আরও compact GitHub-friendly diagram** বানাতে পারি যেখানে horizontal bars দেখাবে **each request timeline + timeout + error**, যাতে copy-paste করলে একদম প্রাকটিক্যাল reference হিসেবে use করা যায়।  
+
+চাও আমি সেটা বানাই?
+```
+
+দারুণ! তাহলে চল, আমি বানাচ্ছি **compact GitHub-friendly ASCII timeline**, যেখানে প্রতিটি request-কে horizontal bar দিয়ে দেখানো হবে, timeout, queued vs running, এবং error states সব একনজরে দেখা যাবে।
+
+---
+
+```markdown
+# PostgreSQL + Go Context Timeout: Compact Timeline
+
+## Scenario
+
+- Max DB connections: 2  
+- 6 concurrent requests to `/v1/movies/:id`  
+- SQL query: `WITH delay AS (SELECT pg_sleep(3))`  
+- Go context timeout: 2 seconds  
+
+---
+
+## Compact Timeline
+
+```
+
+## Time (s)   0      0.5    1      1.5    2      2.5    3      3.5
+
+Context     |------------------2s timeout--------------------------|
+
+Req1        |======RUNNING======|X
+Req2        |======RUNNING======|X
+Req3        |======QUEUED=======|Y
+Req4        |======QUEUED=======|Y
+Req5        |======QUEUED=======|Y
+Req6        |======QUEUED=======|Y
+
+Legend:
+RUNNING  = executing query (pg\_sleep active)
+QUEUED   = waiting for free DB connection
+X        = running query canceled at timeout → "pq: canceling statement"
+Y        = queued request canceled before execution → "context.DeadlineExceeded"
+
+```
+
+---
+
+### Step-by-Step Explanation
+
+1. **0s:**  
+   - Req1 & Req2: acquire DB connections → start running queries  
+   - Req3–Req6: no free connection → queued
+
+2. **1–1.5s:**  
+   - Running queries continue executing  
+   - Queued requests still waiting
+
+3. **2s (timeout):**  
+   - Req1 & Req2: running queries canceled → `"pq: canceling statement"`  
+   - Req3–Req6: queued → context expired → `"context.DeadlineExceeded"`
+
+4. **After 2s:**  
+   - All requests failed due to context deadline  
+   - `defer cancel()` ensures context resources released  
+
+---
+
+### Key Takeaways
+
+- Timeout affects **queued, running, and scanning phases**.  
+- Small connection pool → queued requests → higher chance of hitting timeout.  
+- Always reference CTE (`pg_sleep`) in main query to ensure execution.  
+- Always use `defer cancel()` to prevent resource leaks.  
+- Errors:
+  - Running query canceled → `"pq: canceling statement due to user request"`  
+  - Queued request timeout → `"context.DeadlineExceeded"`  
+  - Scan timeout → `"Scan() context.DeadlineExceeded"`
+```
+
+---
+
+✅ এই version-এ প্রতিটি request **horizontal timeline**, queued vs running state, timeout, এবং error states একনজরে দেখতে পাওয়া যায়।
+
+যদি চাও, আমি এটাকে আরও **“GitHub Markdown + color-coded emoji/status”** version বানাতে পারি যা copy-paste করলে readable ও visually clear হবে।
+
+চাও আমি সেটা বানাই?
