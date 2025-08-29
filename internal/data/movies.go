@@ -59,12 +59,18 @@ func (m MovieModel) Get(id int64) (*Movie, error) {
 		return nil, ErrRecordNotFound
 	}
 
-	query := `SELECT id, created_at, title, year, runtime, genres, version
-	FROM movies
-	WHERE id = $1`
+	query := `
+	WITH delay AS (SELECT pg_sleep(3))
+	SELECT id, created_at, title, year, runtime, genres, version
+	FROM movies, delay
+	WHERE id = $1;
+	`
 
 	var movie Movie
-	err := m.DB.QueryRow(context.Background(), query, id).Scan(
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	err := m.DB.QueryRow(ctx, query, id).Scan(
 		&movie.ID,
 		&movie.CreatedAt,
 		&movie.Title,
@@ -87,10 +93,11 @@ func (m MovieModel) Get(id int64) (*Movie, error) {
 
 func (m MovieModel) Update(movie *Movie) error {
 	query := `
-UPDATE movies
-SET title = $1, year = $2, runtime = $3, genres = $4, version = version + 1
-WHERE id = $5 AND version = $6
-RETURNING version`
+		UPDATE movies
+		SET title = $1, year = $2, runtime = $3, genres = $4, version = version + 1
+		WHERE id = $5 AND version = $6
+		RETURNING version
+	`
 	args := []interface{}{
 		movie.Title,
 		movie.Year,
@@ -100,7 +107,7 @@ RETURNING version`
 		movie.Version,
 	}
 
-	err := m.DB.QueryRow(context.Background(),query, args...).Scan(&movie.Version)
+	err := m.DB.QueryRow(context.Background(), query, args...).Scan(&movie.Version)
 	if err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):

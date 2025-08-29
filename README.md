@@ -607,3 +607,106 @@ MovieID | Title          | Version
 
 ---
 
+
+# 8.3. Using pg_sleep() in PostgreSQL with Go (pgxpool)
+
+## Problem
+- `pg_sleep(n)` returns `void` (`OID 2278`).
+- When used directly in `SELECT`, Go/pgx cannot scan into normal types, causing:
+
+
+cannot scan unknown type (OID 2278) into \*interface{}
+
+- Need a way to add delay without breaking Go Scan.
+
+## Options
+
+### 1. Direct SELECT
+```sql
+SELECT pg_sleep(2), id, created_at, title, year, runtime, genres, version
+FROM movies
+WHERE id = $1;
+````
+
+Pros:
+
+* Simple to write.
+
+Cons:
+
+* Must add dummy field in Go Scan (`&[]byte{}` or `&dummy`).
+* Not clean for production.
+
+### 2. Subquery Version
+
+```sql
+SELECT id, created_at, title, year, runtime, genres, version
+FROM (
+    SELECT pg_sleep(2), id, created_at, title, year, runtime, genres, version
+    FROM movies
+    WHERE id = $1
+) sub;
+```
+
+Pros:
+
+* No dummy field in Go.
+* Delay works.
+
+Cons:
+
+* Slightly more complex query.
+
+### 3. CTE Version (Recommended)
+
+```sql
+WITH delay AS (SELECT pg_sleep(2))
+SELECT id, created_at, title, year, runtime, genres, version
+FROM movies
+WHERE id = $1;
+```
+
+Pros:
+
+* Clean separation, delay isolated in CTE.
+* Go Scan works normally.
+* Production-friendly.
+
+Cons:
+
+* Requires understanding of CTE.
+
+## Go Example (CTE version)
+
+```go
+query := `
+    WITH delay AS (SELECT pg_sleep(10))
+    SELECT id, created_at, title, year, runtime, genres, version
+    FROM movies
+    WHERE id = $1
+`
+
+err := m.DB.QueryRow(context.Background(), query, id).Scan(
+    &movie.ID,
+    &movie.CreatedAt,
+    &movie.Title,
+    &movie.Year,
+    &movie.Runtime,
+    &movie.Genres,
+    &movie.Version,
+)
+```
+
+## Verdict
+
+* Quick test/demo → Direct SELECT (with dummy field).
+* Cleaner inline delay → Subquery.
+* Best practice → CTE (no dummy, clean, readable).
+
+```
+
+---
+
+যদি চাও আমি এটা **ডিরেক্টলি `.md` ফাইলে তৈরি করে দিয়ে দিতে পারি**, ready to use।  
+চাও আমি সেটা করি?
+```
