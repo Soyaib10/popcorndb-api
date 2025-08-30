@@ -39,39 +39,32 @@ type MovieModel struct {
 	DB *pgxpool.Pool
 }
 
-func (m MovieModel) Insert(movie *Movie) error {
-	query := `
-		INSERT INTO movies (title, year, runtime, genres)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, created_at, version`
-
-	args := []interface{}{movie.Title, movie.Year, movie.Runtime, movie.Genres}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	return m.DB.QueryRow(ctx, query, args...).Scan(
-		&movie.ID,
-		&movie.CreatedAt,
-		&movie.Version,
-	)
-}
-
 func (m MovieModel) Get(id int64) (*Movie, error) {
+	/*
+		- check for param err
+		- create a context
+		- write query
+		- get data from db
+		- bind data with destinaton struct
+		- handle possible errors
+	*/
+
 	if id < 1 {
 		return nil, ErrRecordNotFound
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 
 	query := `
 	SELECT id, created_at, title, year, runtime, genres, version
 	FROM movies
 	WHERE id = $1;
 	`
+	row := m.DB.QueryRow(ctx, query, id)
 
 	var movie Movie
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	err := m.DB.QueryRow(ctx, query, id).Scan(
+	err := row.Scan(
 		&movie.ID,
 		&movie.CreatedAt,
 		&movie.Title,
@@ -92,7 +85,99 @@ func (m MovieModel) Get(id int64) (*Movie, error) {
 	return &movie, nil
 }
 
+func (m MovieModel) GetAll(title string, genres []string, filters Filters) ([]*Movie, error) {
+	/*
+		- create a context
+		- write query
+		- get data from db and close rows
+		- bind data with destinaton struct
+		- handle possible errors
+	*/
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	query := `
+		SELECT id, created_at, title, year, runtime, genres, version
+		FROM movies
+		ORDER BY id
+	`
+	rows, err := m.DB.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	movies := []*Movie{}
+	for rows.Next() {
+		var movie Movie
+		err := rows.Scan(
+			&movie.ID,
+			&movie.CreatedAt,
+			&movie.Title,
+			&movie.Year,
+			&movie.Runtime,
+			&movie.Genres,
+			&movie.Version,
+		)
+		if err != nil {
+			return nil, err
+		}
+		movies = append(movies, &movie)
+	}
+
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return movies, nil
+}
+
+func (m MovieModel) Insert(movie *Movie) error {
+	/*
+		- create a context
+		- prepare arguments from struct
+		- execute query and return inserted row
+		- bind returned values into destination struct
+		- handle possible errors
+	*/
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	query := `
+		INSERT INTO movies (title, year, runtime, genres)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, version
+		`
+	args := []interface{}{movie.Title, movie.Year, movie.Runtime, movie.Genres}
+	row := m.DB.QueryRow(ctx, query, args...)
+
+	err := row.Scan(
+		&movie.ID,
+		&movie.CreatedAt,
+		&movie.Version,
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (m MovieModel) Update(movie *Movie) error {
+	/*
+		- create a context
+		- write query
+		- prepare arguments from struct
+		- execute the query (with RETURN maybe)
+		- bind returned values into destination struct
+		- handle possible errors
+	*/
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
 	query := `
 		UPDATE movies
 		SET title = $1, year = $2, runtime = $3, genres = $4, version = version + 1
@@ -107,10 +192,9 @@ func (m MovieModel) Update(movie *Movie) error {
 		movie.ID,
 		movie.Version,
 	}
-	
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	err := m.DB.QueryRow(ctx, query, args...).Scan(&movie.Version)
+	row := m.DB.QueryRow(ctx, query, args...)
+
+	err := row.Scan(&movie.Version)
 	if err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -123,15 +207,27 @@ func (m MovieModel) Update(movie *Movie) error {
 }
 
 func (m MovieModel) Delete(id int64) error {
+	/*
+		- check param
+		- create a context 
+		- write query 
+		- execute the query using Exec()
+		- check how many rows were affected
+		- if no rows affected, return ErrRecordNotFound
+		- otherwise, return nil
+	*/
+
 	if id < 1 {
 		return ErrRecordNotFound
 	}
-	query := `
-		DELETE FROM movies
-		WHERE id = $1`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
+	query := `
+		DELETE FROM movies
+		WHERE id = $1
+		`
 	result, err := m.DB.Exec(ctx, query, id)
 	if err != nil {
 		return err
