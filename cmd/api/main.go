@@ -89,8 +89,8 @@ func openDB(cfg config) (*pgxpool.Pool, error) {
 	}
 
 	poolConfig.MaxConns = int32(cfg.db.maxOpenConns)
-    poolConfig.MinConns = int32(cfg.db.maxIdleConns)
-    duration, err := time.ParseDuration(cfg.db.maxIdleTime)
+	poolConfig.MinConns = int32(cfg.db.maxIdleConns)
+	duration, err := time.ParseDuration(cfg.db.maxIdleTime)
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +105,9 @@ func openDB(cfg config) (*pgxpool.Pool, error) {
 		pool.Close()
 		return nil, err
 	}
+
+	amar := 45
+	fmt.Print(amar)
 
 	return pool, nil
 }
