@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Soyaib10/popcorndb-api/internal/validator"
@@ -85,7 +86,7 @@ func (m MovieModel) Get(id int64) (*Movie, error) {
 	return &movie, nil
 }
 
-func (m MovieModel) GetAll(title string, genres []string, filters Filters) ([]*Movie, error) {
+func (m MovieModel) GetAll(title string, genres []string, filters Filters) ([]*Movie, Metadata, error) {
 	/*
 		- create a context
 		- write query
@@ -97,24 +98,29 @@ func (m MovieModel) GetAll(title string, genres []string, filters Filters) ([]*M
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	query := `
-		SELECT id, created_at, title, year, runtime, genres, version
+	query := fmt.Sprintf(`
+		SELECT count(*) OVER(), id, created_at, title, year, runtime, genres, version
 		FROM movies
 		WHERE (to_tsvector('simple', title) @@ plainto_tsquery('simple', $1) OR $1 = '')
 		AND (genres @> $2 OR $2 = '{}')
-		ORDER BY id
-	`
+		ORDER BY %s %s, id ASC
+		LIMIT $3 OFFSET $4`, filters.sortColumn(), filters.sortDirection())
 
-	rows, err := m.DB.Query(ctx, query, title, genres)
+	args := []interface{}{title, genres, filters.limit(), filters.offset()}
+
+	rows, err := m.DB.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, Metadata{}, err
 	}
 	defer rows.Close()
 
+
 	movies := []*Movie{}
+	totalRecords := 0
 	for rows.Next() {
 		var movie Movie
 		err := rows.Scan(
+			&totalRecords,
 			&movie.ID,
 			&movie.CreatedAt,
 			&movie.Title,
@@ -124,16 +130,18 @@ func (m MovieModel) GetAll(title string, genres []string, filters Filters) ([]*M
 			&movie.Version,
 		)
 		if err != nil {
-			return nil, err
+			return nil, Metadata{}, err
 		}
 		movies = append(movies, &movie)
 	}
 
 	if rows.Err() != nil {
-		return nil, rows.Err()
+		return nil, Metadata{}, rows.Err()
 	}
 
-	return movies, nil
+	metadata := calculateMetadata(totalRecords, filters.Page, filters.PageSize)
+
+	return  movies, metadata, nil
 }
 
 func (m MovieModel) Insert(movie *Movie) error {
@@ -212,8 +220,8 @@ func (m MovieModel) Update(movie *Movie) error {
 func (m MovieModel) Delete(id int64) error {
 	/*
 		- check param
-		- create a context 
-		- write query 
+		- create a context
+		- write query
 		- execute the query using Exec()
 		- check how many rows were affected
 		- if no rows affected, return ErrRecordNotFound
