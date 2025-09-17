@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
+	
 	"flag"
 	"fmt"
-	"log"
+	
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/Soyaib10/popcorndb-api/internal/data"
+	"github.com/Soyaib10/popcorndb-api/internal/jsonlog"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
@@ -29,14 +31,16 @@ type config struct {
 
 type application struct {
 	config config
-	logger *log.Logger
+	logger *jsonlog.Logger
 	models data.Models
 }
 
 func main() {
+	logger := jsonlog.New(os.Stdout, jsonlog.LevelInfo)
+
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("No .env file found, using system environment variables.")
+		logger.PrintInfo("No .env file found, using system environment variables.", nil)
 	}
 
 	var cfg config
@@ -49,16 +53,14 @@ func main() {
 	flag.IntVar(&cfg.db.maxOpenConns, "db-max-open-conns", 25, "PostgreSQL max open connections")
 	flag.IntVar(&cfg.db.maxIdleConns, "db-max-idle-conns", 25, "PostgreSQL max idle connections")
 	flag.StringVar(&cfg.db.maxIdleTime, "db-max-idle-time", "15m", "PostgreSQL max connection idle time")
-	flag.Parse()
-
-	logger := log.New(os.Stdout, "", log.Ldate|log.Ltime)
+	
 
 	db, err := openDB(cfg)
 	if err != nil {
-		logger.Fatal(err)
+		logger.PrintFatal(err, nil)
 	}
 	defer db.Close()
-	logger.Printf("db connection pool established")
+	logger.PrintInfo("db connection pool established", nil)
 
 	app := &application{
 		config: cfg,
@@ -74,9 +76,9 @@ func main() {
 		WriteTimeout: 30 * time.Second,
 	}
 
-	logger.Printf("starting %s server on %s", cfg.env, srv.Addr)
+	logger.PrintInfo(fmt.Sprintf("starting %s server on %s", cfg.env, srv.Addr), nil)
 	err = srv.ListenAndServe()
-	logger.Fatal(err)
+	logger.PrintFatal(err, nil)
 }
 
 func openDB(cfg config) (*pgxpool.Pool, error) {
@@ -106,8 +108,7 @@ func openDB(cfg config) (*pgxpool.Pool, error) {
 		return nil, err
 	}
 
-	amar := 45
-	fmt.Print(amar)
+	
 
 	return pool, nil
 }
