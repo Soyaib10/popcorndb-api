@@ -7,6 +7,7 @@ import (
 
 	"github.com/Soyaib10/popcorndb-api/internal/validator"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -87,10 +88,10 @@ func (m UserModel) Insert(user *User) error {
 	defer cancel()
 
 	query := `
-        INSERT INTO users (name, email, password_hash, activated)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, created_at, version
-    `
+		INSERT INTO users (name, email, password_hash, activated)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, version
+	`
 	args := []interface{}{user.Name, user.Email, user.Password.hash, user.Activated}
 	row := m.DB.QueryRow(ctx, query, args...)
 
@@ -100,14 +101,14 @@ func (m UserModel) Insert(user *User) error {
 		&user.Version,
 	)
 	if err != nil {
-		switch {
-		case err.Error() == `pq: duplicate key value violates unique constraint "users_email_key"`:
-			return ErrDuplicateEmail
-		default:
-			return err
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" {
+				return ErrDuplicateEmail
+			}
 		}
+		return err
 	}
-
 	return nil
 }
 
@@ -116,10 +117,10 @@ func (m UserModel) GetByEmail(email string) (*User, error) {
 	defer cancel()
 
 	query := `
-        SELECT id, created_at, name, email, password_hash, activated, version
-        FROM users
-        WHERE email = $1
-    `
+		SELECT id, created_at, name, email, password_hash, activated, version
+		FROM users
+		WHERE email = $1
+	`
 	row := m.DB.QueryRow(ctx, query, email)
 
 	var user User
@@ -140,7 +141,6 @@ func (m UserModel) GetByEmail(email string) (*User, error) {
 			return nil, err
 		}
 	}
-
 	return &user, nil
 }
 
@@ -149,11 +149,11 @@ func (m UserModel) Update(user *User) error {
 	defer cancel()
 
 	query := `
-        UPDATE users
-        SET name = $1, email = $2, password_hash = $3, activated = $4, version = version + 1
-        WHERE id = $5 AND version = $6
-        RETURNING version
-    `
+		UPDATE users
+		SET name = $1, email = $2, password_hash = $3, activated = $4, version = version + 1
+		WHERE id = $5 AND version = $6
+		RETURNING version
+	`
 	args := []interface{}{
 		user.Name,
 		user.Email,
@@ -167,15 +167,15 @@ func (m UserModel) Update(user *User) error {
 
 	err := row.Scan(&user.Version)
 	if err != nil {
-		switch {
-		case err.Error() == `pq: duplicate key value violates unique constraint "users_email_key"`:
-			return ErrDuplicateEmail
-		case errors.Is(err, pgx.ErrNoRows):
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" {
+				return ErrDuplicateEmail
+			}
+		} else if errors.Is(err, pgx.ErrNoRows) {
 			return ErrEditConflict
-		default:
-			return err
 		}
+		return err
 	}
-
 	return nil
 }
